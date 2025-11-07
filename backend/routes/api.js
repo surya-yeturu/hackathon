@@ -1,5 +1,6 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
+import multer from 'multer';
 import Config from '../models/Config.js';
 import Task from '../models/Task.js';
 import TeamMember from '../models/TeamMember.js';
@@ -7,6 +8,22 @@ import { syncGitHubIssues, getGitHubUserInfo } from '../services/githubService.j
 import { syncTrelloCards, getTrelloMemberInfo, fetchTrelloBoards } from '../services/trelloService.js';
 import { calculateMetrics, getTeamMembers } from '../services/metricsService.js';
 import { generateAIResponse, generateAISummary, generatePredictiveMetrics, analyzeSentiment } from '../services/aiService.js';
+import { parseAndStoreCSV } from '../services/csvService.js';
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'), false);
+    }
+  },
+});
 
 const router = express.Router();
 
@@ -222,10 +239,98 @@ router.get('/ai/insights', async (req, res) => {
       analyzeSentiment(),
     ]);
 
+    // Calculate performance metrics from MongoDB
+    const tasks = await Task.find().lean();
+    const metrics = await calculateMetrics();
+    
+    // Task closure performance
+    const completedTasks = tasks.filter(t => t.status === 'completed' && t.closedAt && t.createdAt);
+    const closureTimes = completedTasks.map(t => 
+      (new Date(t.closedAt) - new Date(t.createdAt)) / (1000 * 60 * 60) // hours
+    );
+    const avgClosureTime = closureTimes.length > 0
+      ? closureTimes.reduce((a, b) => a + b, 0) / closureTimes.length
+      : 0;
+    
+    // Previous period average (last 7 days vs previous 7 days)
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+    
+    const recentCompleted = completedTasks.filter(t => new Date(t.closedAt) >= weekAgo);
+    const previousCompleted = completedTasks.filter(t => {
+      const closed = new Date(t.closedAt);
+      return closed >= twoWeeksAgo && closed < weekAgo;
+    });
+    
+    const recentAvg = recentCompleted.length > 0
+      ? recentCompleted.reduce((sum, t) => {
+          const hours = (new Date(t.closedAt) - new Date(t.createdAt)) / (1000 * 60 * 60);
+          return sum + hours;
+        }, 0) / recentCompleted.length
+      : 0;
+    
+    const previousAvg = previousCompleted.length > 0
+      ? previousCompleted.reduce((sum, t) => {
+          const hours = (new Date(t.closedAt) - new Date(t.createdAt)) / (1000 * 60 * 60);
+          return sum + hours;
+        }, 0) / previousCompleted.length
+      : 0;
+
+    // Blocked tasks
+    const blockedTasks = tasks.filter(t => t.status === 'blocked').length;
+    const blockedPercentage = tasks.length > 0
+      ? Math.round((blockedTasks / tasks.length) * 100 * 10) / 10
+      : 0;
+
+    // Due date compliance
+    const tasksWithDueDate = tasks.filter(t => t.dueDate);
+    const nowDate = new Date();
+    nowDate.setHours(0, 0, 0, 0);
+    const overdue = tasksWithDueDate.filter(t => {
+      const due = new Date(t.dueDate);
+      due.setHours(0, 0, 0, 0);
+      return due < nowDate && t.status !== 'completed';
+    }).length;
+    const onTime = tasksWithDueDate.filter(t => {
+      const due = new Date(t.dueDate);
+      due.setHours(0, 0, 0, 0);
+      return (due >= nowDate || t.status === 'completed');
+    }).length;
+
+    // In progress status
+    const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
+    const inProgressTimes = inProgressTasks
+      .filter(t => t.createdAt)
+      .map(t => (now - new Date(t.createdAt)) / (1000 * 60 * 60)); // hours
+    const avgActiveTime = inProgressTimes.length > 0
+      ? inProgressTimes.reduce((a, b) => a + b, 0) / inProgressTimes.length
+      : 0;
+
+    const performanceMetrics = {
+      taskClosure: {
+        currentAvg: Math.round(avgClosureTime * 10) / 10,
+        previousAvg: Math.round(previousAvg * 10) / 10,
+      },
+      blockedTasks: {
+        count: blockedTasks,
+        percentage: blockedPercentage,
+      },
+      dueDateCompliance: {
+        overdue,
+        onTime,
+      },
+      inProgress: {
+        activeTasks: inProgressTasks.length,
+        avgActiveTime: Math.round(avgActiveTime * 10) / 10,
+      },
+    };
+
     res.json({
       aiSummary: summary,
       predictiveMetrics: predictive,
       sentiment,
+      performanceMetrics,
     });
   } catch (error) {
     console.error('Error fetching AI insights:', error);
@@ -263,6 +368,38 @@ router.delete('/tasks/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting task:', error);
     res.status(500).json({ error: 'Failed to delete task' });
+  }
+});
+
+// Upload CSV file
+router.post('/upload/csv', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const result = await parseAndStoreCSV(req.file.buffer);
+    
+    // Broadcast update to connected clients
+    const { broadcastUpdate } = await import('../services/websocketService.js');
+    const { updateMetrics } = await import('../services/dataSync.js');
+    
+    // Update metrics and broadcast
+    await updateMetrics(null);
+    
+    await broadcastUpdate('task_update', { 
+      message: `Imported ${result.imported} tasks from CSV`,
+      imported: result.imported 
+    });
+
+    res.json({
+      message: 'CSV file processed successfully',
+      imported: result.imported,
+      tasks: result.tasks.length,
+    });
+  } catch (error) {
+    console.error('Error processing CSV:', error);
+    res.status(500).json({ error: 'Failed to process CSV file', message: error.message });
   }
 });
 

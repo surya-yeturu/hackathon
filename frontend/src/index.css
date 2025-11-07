@@ -39,4 +39,6 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
-
+.recharts-default-legend {
+  margin: -10px !important;
+}

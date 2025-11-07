@@ -95,7 +95,7 @@ const syncTrelloData = async (wss) => {
   }
 };
 
-const updateMetrics = async (wss) => {
+export const updateMetrics = async (wss) => {
   try {
     const metrics = await calculateMetrics();
     broadcastUpdate('metrics_update', metrics);

@@ -1,24 +1,81 @@
 import { useState, useEffect } from 'react';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { TeamMember } from '../types';
-import { mockTeamMembers, mockDashboardData } from '../services/mockData';
 import { wsService } from '../services/websocket';
 import DonutChart from '../components/charts/DonutChart';
 import BubbleChart from '../components/charts/BubbleChart';
 
+const API_URL = 'http://localhost:8080/api';
+
 export default function Tasks() {
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>(mockTeamMembers);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState<Array<{ name: string; tasks: number; openIssues: number; color: string }>>([]);
   const itemsPerPage = 8;
 
+  const fetchTeamMembers = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/team-members`);
+      if (response.ok) {
+        const data = await response.json();
+        setTeamMembers(data);
+      }
+    } catch (error) {
+      console.error('Error fetching team members:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      const response = await fetch(`${API_URL}/tasks`);
+      if (response.ok) {
+        const data = await response.json();
+        const tasks = data.tasks || [];
+        
+        // Calculate projects from tasks
+        const projectMap = new Map<string, { tasks: number; openIssues: number }>();
+        const projectColors = ['#ec4899', '#3b82f6', '#f59e0b', '#10b981', '#a855f7'];
+        
+        tasks.forEach((task: any) => {
+          const projectName = task.project || 'default';
+          if (!projectMap.has(projectName)) {
+            projectMap.set(projectName, { tasks: 0, openIssues: 0 });
+          }
+          const project = projectMap.get(projectName)!;
+          project.tasks++;
+          if (task.status === 'open' || task.status === 'blocked') {
+            project.openIssues++;
+          }
+        });
+
+        const projectList = Array.from(projectMap.entries()).map(([name, data], index) => ({
+          name,
+          tasks: data.tasks,
+          openIssues: data.openIssues,
+          color: projectColors[index % projectColors.length],
+        }));
+
+        setProjects(projectList.length > 0 ? projectList : []);
+      }
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+    }
+  };
+
   useEffect(() => {
+    fetchTeamMembers();
+    fetchProjects();
+
     const unsubscribe = wsService.onMessage((message) => {
       if (message.type === 'task_update') {
-        // Update team members data
-        if (message.data.teamMembers) {
-          setTeamMembers(message.data.teamMembers);
-        }
+        // Refresh data when tasks are updated
+        fetchTeamMembers();
+        fetchProjects();
       }
     });
 
@@ -35,14 +92,6 @@ export default function Tasks() {
     currentPage * itemsPerPage
   );
 
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map((n) => n[0])
-      .join('')
-      .toUpperCase();
-  };
-
   const getTrendIcon = (trend: number) => {
     if (trend > 0) {
       return <span className="text-green-500">↗</span>;
@@ -52,13 +101,13 @@ export default function Tasks() {
     return <span className="text-dark-muted">—</span>;
   };
 
-  const tasksByProjectData = mockDashboardData.projects.map((project) => ({
+  const tasksByProjectData = projects.map((project) => ({
     name: project.name,
     value: project.tasks,
     color: project.color,
   }));
 
-  const openIssuesData = mockDashboardData.projects.map((project) => ({
+  const openIssuesData = projects.map((project) => ({
     name: project.name,
     value: project.openIssues,
     color: project.color,
@@ -109,30 +158,44 @@ export default function Tasks() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedMembers.map((member) => (
-                  <tr key={member.id} className="border-b border-dark-border hover:bg-dark-bg transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-blue-500 flex items-center justify-center text-white font-semibold text-sm">
-                          {member.initials}
-                        </div>
-                        <span className="text-dark-text">{member.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-dark-text">{member.assigned}</td>
-                    <td className="py-3 px-4 text-dark-text">{member.completed}</td>
-                    <td className="py-3 px-4 text-dark-text">{member.ongoing}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        {getTrendIcon(member.trend)}
-                        <span className="text-sm text-dark-muted">
-                          {member.trend > 0 ? '+' : ''}
-                          {member.trend.toFixed(1)}%
-                        </span>
-                      </div>
+                {loading ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-dark-muted">
+                      Loading team members...
                     </td>
                   </tr>
-                ))}
+                ) : paginatedMembers.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-dark-muted">
+                      No team members found. Upload a CSV file to import tasks.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedMembers.map((member, index) => (
+                    <tr key={member.id || index} className="border-b border-dark-border hover:bg-dark-bg transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-blue-500 flex items-center justify-center text-white font-semibold text-sm">
+                            {member.initials}
+                          </div>
+                          <span className="text-dark-text">{member.name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-dark-text">{member.assigned}</td>
+                      <td className="py-3 px-4 text-dark-text">{member.completed}</td>
+                      <td className="py-3 px-4 text-dark-text">{member.ongoing}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          {getTrendIcon(member.trend)}
+                          <span className="text-sm text-dark-muted">
+                            {member.trend > 0 ? '+' : ''}
+                            {member.trend.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -1,14 +1,75 @@
 import { useEffect, useState } from 'react';
 import { Bot, TrendingUp, AlertTriangle, CheckCircle, Users } from 'lucide-react';
-import { DashboardData } from '../types';
-import { mockDashboardData } from '../services/mockData';
 import { wsService } from '../services/websocket';
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
+const API_URL = 'http://localhost:8080/api';
+
+interface AIInsightsData {
+  aiSummary?: {
+    summary: string;
+    alerts: string[];
+    timestamp: string;
+  };
+  predictiveMetrics?: {
+    sprintCompletion: number;
+    nextWeekWorkload: string;
+    workloadTasks: number;
+    riskLevel: string;
+    riskMessage: string;
+    avgClosureTime: number;
+  };
+  sentiment?: {
+    positive: number;
+    neutral: number;
+    negative: number;
+  };
+  performanceMetrics?: {
+    taskClosure: {
+      currentAvg: number;
+      previousAvg: number;
+    };
+    blockedTasks: {
+      count: number;
+      percentage: number;
+    };
+    dueDateCompliance: {
+      overdue: number;
+      onTime: number;
+    };
+    inProgress: {
+      activeTasks: number;
+      avgActiveTime: number;
+    };
+  };
+}
+
 export default function AIInsights() {
-  const [data, setData] = useState<DashboardData>(mockDashboardData);
+  const [data, setData] = useState<AIInsightsData>({});
+  const [loading, setLoading] = useState(true);
+
+  const fetchAIInsights = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/ai/insights`);
+      if (response.ok) {
+        const insights = await response.json();
+        setData(insights);
+      } else {
+        console.error('Failed to fetch AI insights');
+      }
+    } catch (error) {
+      console.error('Error fetching AI insights:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
+    // Fetch initial data
+    fetchAIInsights();
+
+    // Listen for WebSocket updates
     const unsubscribe = wsService.onMessage((message) => {
       if (message.type === 'ai_insight') {
         setData((prev) => ({ ...prev, ...message.data }));
@@ -18,12 +79,42 @@ export default function AIInsights() {
     return unsubscribe;
   }, []);
 
-  const benchmarkTrendData = [
-    { date: 'Week 1', 'Alpha Team': 45, 'Beta Team': 35, 'Gamma Team': 38, 'Your Team': 42 },
-    { date: 'Week 2', 'Alpha Team': 50, 'Beta Team': 38, 'Gamma Team': 40, 'Your Team': 45 },
-    { date: 'Week 3', 'Alpha Team': 55, 'Beta Team': 39, 'Gamma Team': 42, 'Your Team': 48 },
-    { date: 'Week 4', 'Alpha Team': 58, 'Beta Team': 42, 'Gamma Team': 45, 'Your Team': 49 },
-  ];
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold text-dark-text mb-2">AI Insights</h2>
+          <p className="text-dark-muted">AI-powered analytics and predictive insights</p>
+        </div>
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-dark-muted">Loading AI insights...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Check if we have any data
+  const hasData = data.aiSummary || data.predictiveMetrics || data.sentiment || data.performanceMetrics;
+
+  if (!hasData) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold text-dark-text mb-2">AI Insights</h2>
+          <p className="text-dark-muted">AI-powered analytics and predictive insights</p>
+        </div>
+        <div className="bg-dark-card rounded-lg p-12 border border-dark-border text-center">
+          <p className="text-dark-muted mb-4">No AI insights available yet.</p>
+          <p className="text-sm text-dark-muted">
+            Upload tasks via CSV or sync from GitHub to generate AI-powered insights.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -52,75 +143,77 @@ export default function AIInsights() {
       )}
 
       {/* Performance Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
-          <div className="flex items-center gap-3 mb-4">
-            <CheckCircle className="w-5 h-5 text-green-500" />
-            <h4 className="text-sm font-semibold text-dark-muted">Task Closure Performance</h4>
-          </div>
-          <div className="space-y-2">
-            <div>
-              <span className="text-xs text-dark-muted">Current Avg</span>
-              <p className="text-xl font-bold text-dark-text">30.1h</p>
+      {data.performanceMetrics && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
+            <div className="flex items-center gap-3 mb-4">
+              <CheckCircle className="w-5 h-5 text-green-500" />
+              <h4 className="text-sm font-semibold text-dark-muted">Task Closure Performance</h4>
             </div>
-            <div>
-              <span className="text-xs text-dark-muted">Previous Avg</span>
-              <p className="text-lg text-dark-text">25.6h</p>
+            <div className="space-y-2">
+              <div>
+                <span className="text-xs text-dark-muted">Current Avg</span>
+                <p className="text-xl font-bold text-dark-text">{data.performanceMetrics.taskClosure.currentAvg}h</p>
+              </div>
+              <div>
+                <span className="text-xs text-dark-muted">Previous Avg</span>
+                <p className="text-lg text-dark-text">{data.performanceMetrics.taskClosure.previousAvg}h</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
-          <div className="flex items-center gap-3 mb-4">
-            <AlertTriangle className="w-5 h-5 text-yellow-500" />
-            <h4 className="text-sm font-semibold text-dark-muted">Blocked Tasks Alert</h4>
-          </div>
-          <div className="space-y-2">
-            <div>
-              <span className="text-xs text-dark-muted">Blocked Tasks</span>
-              <p className="text-xl font-bold text-dark-text">15</p>
+          <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              <h4 className="text-sm font-semibold text-dark-muted">Blocked Tasks Alert</h4>
             </div>
-            <div>
-              <span className="text-xs text-dark-muted">% of Total</span>
-              <p className="text-lg text-dark-text">30.0%</p>
+            <div className="space-y-2">
+              <div>
+                <span className="text-xs text-dark-muted">Blocked Tasks</span>
+                <p className="text-xl font-bold text-dark-text">{data.performanceMetrics.blockedTasks.count}</p>
+              </div>
+              <div>
+                <span className="text-xs text-dark-muted">% of Total</span>
+                <p className="text-lg text-dark-text">{data.performanceMetrics.blockedTasks.percentage}%</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
-          <div className="flex items-center gap-3 mb-4">
-            <CheckCircle className="w-5 h-5 text-blue-500" />
-            <h4 className="text-sm font-semibold text-dark-muted">Due Date Compliance</h4>
-          </div>
-          <div className="space-y-2">
-            <div>
-              <span className="text-xs text-dark-muted">Overdue</span>
-              <p className="text-xl font-bold text-red-500">14</p>
+          <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
+            <div className="flex items-center gap-3 mb-4">
+              <CheckCircle className="w-5 h-5 text-blue-500" />
+              <h4 className="text-sm font-semibold text-dark-muted">Due Date Compliance</h4>
             </div>
-            <div>
-              <span className="text-xs text-dark-muted">On Time</span>
-              <p className="text-lg text-green-500">23</p>
+            <div className="space-y-2">
+              <div>
+                <span className="text-xs text-dark-muted">Overdue</span>
+                <p className="text-xl font-bold text-red-500">{data.performanceMetrics.dueDateCompliance.overdue}</p>
+              </div>
+              <div>
+                <span className="text-xs text-dark-muted">On Time</span>
+                <p className="text-lg text-green-500">{data.performanceMetrics.dueDateCompliance.onTime}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
-          <div className="flex items-center gap-3 mb-4">
-            <Users className="w-5 h-5 text-blue-500" />
-            <h4 className="text-sm font-semibold text-dark-muted">In Progress Status</h4>
-          </div>
-          <div className="space-y-2">
-            <div>
-              <span className="text-xs text-dark-muted">Active Tasks</span>
-              <p className="text-xl font-bold text-dark-text">13</p>
+          <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
+            <div className="flex items-center gap-3 mb-4">
+              <Users className="w-5 h-5 text-blue-500" />
+              <h4 className="text-sm font-semibold text-dark-muted">In Progress Status</h4>
             </div>
-            <div>
-              <span className="text-xs text-dark-muted">Avg Active Time</span>
-              <p className="text-lg text-dark-text">159.2h</p>
+            <div className="space-y-2">
+              <div>
+                <span className="text-xs text-dark-muted">Active Tasks</span>
+                <p className="text-xl font-bold text-dark-text">{data.performanceMetrics.inProgress.activeTasks}</p>
+              </div>
+              <div>
+                <span className="text-xs text-dark-muted">Avg Active Time</span>
+                <p className="text-lg text-dark-text">{data.performanceMetrics.inProgress.avgActiveTime}h</p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Predictive Performance Analysis */}
       {data.predictiveMetrics && (
@@ -159,109 +252,6 @@ export default function AIInsights() {
         </div>
       )}
 
-      {/* Team Benchmarking */}
-      {data.benchmarking && (
-        <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-dark-text mb-2">Team Benchmarking</h3>
-            <p className="text-sm text-dark-muted">AI-powered comparison across teams</p>
-          </div>
-          <div className="mb-6 bg-dark-bg rounded-lg p-6 border border-dark-border">
-            <h3 className="text-lg font-semibold text-dark-text mb-4">4-Week Productivity Trends</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <RechartsLineChart data={benchmarkTrendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="date" stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1e293b',
-                    border: '1px solid #334155',
-                    borderRadius: '8px',
-                    color: '#f1f5f9',
-                  }}
-                />
-                <Legend
-                  formatter={(value) => <span style={{ color: '#94a3b8' }}>{value}</span>}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="Your Team"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  dot={{ fill: '#3b82f6', r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="Alpha Team"
-                  stroke="#a855f7"
-                  strokeWidth={2}
-                  dot={{ fill: '#a855f7', r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="Beta Team"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={{ fill: '#f59e0b', r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="Gamma Team"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ fill: '#10b981', r: 4 }}
-                />
-              </RechartsLineChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {data.benchmarking.map((team, index) => (
-              <div key={index} className="bg-dark-bg rounded-lg p-4 border border-dark-border">
-                <h4 className="font-semibold text-dark-text mb-4">{team.team}</h4>
-                <div className="space-y-3">
-                  <div>
-                    <span className="text-xs text-dark-muted">Total Tasks</span>
-                    <p className="text-lg font-bold text-dark-text">{team.totalTasks}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-dark-muted">Velocity</span>
-                    <p className="text-lg font-bold text-dark-text">{team.velocity}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-dark-muted">Efficiency</span>
-                    <div className="flex items-center gap-2">
-                      <p className="text-lg font-bold text-dark-text">{team.efficiency}%</p>
-                      {team.efficiencyTrend === 'up' && (
-                        <TrendingUp className="w-4 h-4 text-green-500" />
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-xs text-dark-muted">Rank</span>
-                    <p className="text-lg font-bold text-dark-text">#{team.rank}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Benchmarking Insights */}
-      {data.benchmarking && (
-        <div className="bg-dark-card rounded-lg p-6 border border-dark-border">
-          <div className="flex items-center gap-3 mb-4">
-            <Bot className="w-5 h-5 text-green-500" />
-            <h3 className="text-lg font-semibold text-dark-text">Benchmarking Insights</h3>
-          </div>
-          <p className="text-dark-text">
-            Your team ranks #{data.benchmarking[0].rank} with 8 tasks behind Alpha Team. Velocity increased 22% over 4
-            weeks, outpacing Beta (+16%) and Gamma (+29%).
-          </p>
-          <p className="text-dark-text mt-2">Focus on efficiency improvements to reach #1 position.</p>
-        </div>
-      )}
 
       {/* Team Communication Sentiment */}
       {data.sentiment && (
@@ -310,7 +300,11 @@ export default function AIInsights() {
           </div>
           <div className="mt-6 p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
             <p className="text-sm text-green-400">
-              Team morale appears positive. Keep up the good work and maintain open communication.
+              {data.sentiment.positive >= 70 
+                ? 'Team morale appears positive. Keep up the good work and maintain open communication.'
+                : data.sentiment.positive >= 50
+                ? 'Team sentiment is generally neutral. Consider encouraging more positive communication.'
+                : 'Team sentiment analysis suggests areas for improvement. Focus on positive reinforcement and clear communication.'}
             </p>
           </div>
         </div>

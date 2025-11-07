@@ -12,13 +12,35 @@ export const calculateMetrics = async () => {
     // Check cache
     const cached = await redis.get(cacheKey);
     if (cached) {
-      return cached;
+      return typeof cached === 'string' ? JSON.parse(cached) : cached;
     }
 
     const tasks = await Task.find().lean();
+    
+    // If no tasks, return empty metrics
+    if (tasks.length === 0) {
+      const emptyMetrics = {
+        kpis: {
+          openTasks: { label: 'Open Tasks', value: 0, trend: 0, trendDirection: 'up' },
+          inProgress: { label: 'In Progress', value: 0, trend: 0, trendDirection: 'up' },
+          closedToday: { label: 'Closed Today', value: 0, trend: 0, trendDirection: 'up' },
+          closedThisHour: { label: 'Closed This Hour', value: 0, trend: 0, trendDirection: 'up' },
+          completionRate: { label: 'Completion Rate', value: 0, trend: 0, trendDirection: 'up' },
+        },
+        taskDistribution: [],
+        trendData: [],
+        teamPerformance: [],
+        projects: [],
+      };
+      await redis.set(cacheKey, JSON.stringify(emptyMetrics), { EX: CACHE_TTL });
+      return emptyMetrics;
+    }
+    
     const now = new Date();
-    const todayStart = new Date(now.setHours(0, 0, 0, 0));
-    const hourStart = new Date(now.setMinutes(0, 0, 0));
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const hourStart = new Date(now);
+    hourStart.setMinutes(0, 0, 0);
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     // Calculate KPIs
@@ -71,8 +93,10 @@ export const calculateMetrics = async () => {
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const dateStart = new Date(date.setHours(0, 0, 0, 0));
-      const dateEnd = new Date(date.setHours(23, 59, 59, 999));
+      const dateStart = new Date(date);
+      dateStart.setHours(0, 0, 0, 0);
+      const dateEnd = new Date(date);
+      dateEnd.setHours(23, 59, 59, 999);
 
       const completed = tasks.filter(t => 
         t.status === 'completed' && 
@@ -176,20 +200,12 @@ export const calculateMetrics = async () => {
       },
       taskDistribution,
       trendData,
-      teamPerformance: teamPerformance.length > 0 ? teamPerformance : [
-        { name: 'Alice', completed: 3, inProgress: 2, open: 5 },
-        { name: 'Bob', completed: 2, inProgress: 3, open: 4 },
-        { name: 'Carol', completed: 4, inProgress: 1, open: 6 },
-      ],
-      projects: projectList.length > 0 ? projectList : [
-        { name: 'API Services', tasks: 40, openIssues: 40, color: '#ec4899' },
-        { name: 'Mobile App', tasks: 32, openIssues: 10, color: '#3b82f6' },
-        { name: 'Web Platform', tasks: 28, openIssues: 3, color: '#f59e0b' },
-      ],
+      teamPerformance: teamPerformance.length > 0 ? teamPerformance : [],
+      projects: projectList.length > 0 ? projectList : [],
     };
 
-    // Cache the result
-    await redis.set(cacheKey, metrics, { EX: CACHE_TTL });
+    // Cache the result (Redis requires string)
+    await redis.set(cacheKey, JSON.stringify(metrics), { EX: CACHE_TTL });
 
     return metrics;
   } catch (error) {

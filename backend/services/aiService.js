@@ -96,12 +96,9 @@ const generateFallbackSummary = async () => {
 
 export const generateAIResponse = async (question) => {
   try {
-    if (!openai) {
-      return generateFallbackResponse(question);
-    }
-
     const metrics = await calculateMetrics();
-    const tasks = await Task.find().limit(50).lean();
+    const tasks = await Task.find().sort({ updatedAt: -1 }).limit(100).lean();
+    
     const taskStats = {
       total: tasks.length,
       open: tasks.filter(t => t.status === 'open').length,
@@ -110,55 +107,182 @@ export const generateAIResponse = async (question) => {
       blocked: tasks.filter(t => t.status === 'blocked').length,
     };
 
-    const prompt = `You are a team productivity assistant. Answer the following question based on the current team metrics:
+    // Get project distribution
+    const projectMap = new Map();
+    tasks.forEach(task => {
+      const project = task.project || 'Unassigned';
+      if (!projectMap.has(project)) {
+        projectMap.set(project, { total: 0, open: 0, completed: 0, inProgress: 0, blocked: 0 });
+      }
+      const proj = projectMap.get(project);
+      proj.total++;
+      if (task.status === 'open') proj.open++;
+      else if (task.status === 'completed') proj.completed++;
+      else if (task.status === 'in_progress') proj.inProgress++;
+      else if (task.status === 'blocked') proj.blocked++;
+    });
+
+    // Get team member distribution
+    const memberMap = new Map();
+    tasks.forEach(task => {
+      const member = task.assignedTo || 'Unassigned';
+      if (!memberMap.has(member)) {
+        memberMap.set(member, { total: 0, open: 0, completed: 0, inProgress: 0 });
+      }
+      const mem = memberMap.get(member);
+      mem.total++;
+      if (task.status === 'open') mem.open++;
+      else if (task.status === 'completed') mem.completed++;
+      else if (task.status === 'in_progress') mem.inProgress++;
+    });
+
+    // Get recent completed tasks
+    const recentCompleted = tasks
+      .filter(t => t.status === 'completed' && t.closedAt)
+      .slice(0, 10)
+      .map(t => ({
+        title: t.title,
+        project: t.project || 'Unassigned',
+        assignedTo: t.assignedTo || 'Unassigned',
+        closedAt: t.closedAt,
+      }));
+
+    // Calculate average completion time
+    const completedWithDates = tasks.filter(t => 
+      t.status === 'completed' && t.closedAt && t.createdAt
+    );
+    const avgCompletionTime = completedWithDates.length > 0
+      ? completedWithDates.reduce((sum, t) => {
+          const hours = (new Date(t.closedAt) - new Date(t.createdAt)) / (1000 * 60 * 60);
+          return sum + hours;
+        }, 0) / completedWithDates.length
+      : 0;
+
+    const projectList = Array.from(projectMap.entries())
+      .map(([name, stats]) => `${name}: ${stats.total} tasks (${stats.open} open, ${stats.completed} completed, ${stats.inProgress} in progress, ${stats.blocked} blocked)`)
+      .join('\n');
+
+    const memberList = Array.from(memberMap.entries())
+      .slice(0, 10)
+      .map(([name, stats]) => `${name}: ${stats.total} tasks (${stats.open} open, ${stats.completed} completed, ${stats.inProgress} in progress)`)
+      .join('\n');
+
+    const prompt = `You are a team productivity assistant. Answer the following question based on REAL data from the MongoDB database:
 
 Question: ${question}
 
-Current Metrics:
+CURRENT TEAM METRICS (from MongoDB):
 - Total Tasks: ${taskStats.total}
-- Open: ${taskStats.open}
+- Open Tasks: ${taskStats.open}
 - In Progress: ${taskStats.inProgress}
-- Completed: ${taskStats.completed}
-- Blocked: ${taskStats.blocked}
+- Completed Tasks: ${taskStats.completed}
+- Blocked Tasks: ${taskStats.blocked}
 - Completion Rate: ${metrics.kpis?.completionRate?.value || 0}%
 - Closed Today: ${metrics.kpis?.closedToday?.value || 0}
+- Closed This Hour: ${metrics.kpis?.closedThisHour?.value || 0}
+- Average Completion Time: ${Math.round(avgCompletionTime * 10) / 10} hours
 
-Provide a helpful, concise answer. If the question asks about specific data not available, say so politely.`;
+PROJECT BREAKDOWN:
+${projectList || 'No projects found'}
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a helpful team productivity assistant. Answer questions concisely and accurately based on the provided metrics.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      temperature: 0.7,
-      max_tokens: 200,
-    });
+TEAM MEMBER BREAKDOWN (top 10):
+${memberList || 'No team members found'}
 
-    return completion.choices[0].message.content;
+RECENT COMPLETED TASKS (last 10):
+${recentCompleted.length > 0 
+  ? recentCompleted.map(t => `- ${t.title} (${t.project}, assigned to ${t.assignedTo})`).join('\n')
+  : 'No recently completed tasks'}
+
+Provide a helpful, accurate, and concise answer based on this REAL data. If the question asks about specific information not in the data, politely say so. Use actual numbers from the metrics above.`;
+
+    if (openai) {
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful team productivity assistant. Answer questions concisely and accurately based on the REAL data provided from MongoDB. Always use the actual numbers and facts from the data.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 300,
+      });
+
+      return completion.choices[0].message.content;
+    } else {
+      // Fallback response using real data
+      return generateFallbackResponse(question, taskStats, metrics, projectMap, memberMap, avgCompletionTime);
+    }
   } catch (error) {
     console.error('Error generating AI response:', error);
-    return generateFallbackResponse(question);
+    // Try to get at least basic metrics for fallback
+    try {
+      const metrics = await calculateMetrics();
+      const tasks = await Task.find().limit(50).lean();
+      const taskStats = {
+        total: tasks.length,
+        open: tasks.filter(t => t.status === 'open').length,
+        inProgress: tasks.filter(t => t.status === 'in_progress').length,
+        completed: tasks.filter(t => t.status === 'completed').length,
+        blocked: tasks.filter(t => t.status === 'blocked').length,
+      };
+      return generateFallbackResponse(question, taskStats, metrics, new Map(), new Map(), 0);
+    } catch (fallbackError) {
+      return "I'm sorry, I couldn't access the database right now. Please try again later.";
+    }
   }
 };
 
-const generateFallbackResponse = (question) => {
+const generateFallbackResponse = (question, taskStats, metrics, projectMap, memberMap, avgCompletionTime) => {
   const lowerQuestion = question.toLowerCase();
   
-  if (lowerQuestion.includes('bug') || lowerQuestion.includes('close')) {
-    return 'Currently tracking tasks across all projects. Check the Tasks page for detailed information about closed items.';
-  } else if (lowerQuestion.includes('task') && lowerQuestion.includes('complete')) {
-    return 'You can view completed tasks and completion rates on the Overview dashboard.';
+  // Use real data from MongoDB
+  const totalTasks = taskStats?.total || 0;
+  const openTasks = taskStats?.open || 0;
+  const inProgress = taskStats?.inProgress || 0;
+  const completed = taskStats?.completed || 0;
+  const blocked = taskStats?.blocked || 0;
+  const completionRate = metrics?.kpis?.completionRate?.value || 0;
+  const closedToday = metrics?.kpis?.closedToday?.value || 0;
+  
+  if (lowerQuestion.includes('total') && (lowerQuestion.includes('task') || lowerQuestion.includes('how many'))) {
+    return `Based on the data in MongoDB, you currently have ${totalTasks} total tasks. Of these, ${openTasks} are open, ${inProgress} are in progress, ${completed} are completed, and ${blocked} are blocked.`;
+  } else if (lowerQuestion.includes('open') || lowerQuestion.includes('pending')) {
+    return `You have ${openTasks} open tasks in your database. There are also ${inProgress} tasks currently in progress.`;
+  } else if (lowerQuestion.includes('complete') || lowerQuestion.includes('finished') || lowerQuestion.includes('done')) {
+    return `Your team has completed ${completed} tasks. The completion rate is ${completionRate}%. ${closedToday > 0 ? `${closedToday} tasks were closed today.` : 'No tasks were closed today.'}${avgCompletionTime > 0 ? ` The average completion time is ${Math.round(avgCompletionTime * 10) / 10} hours.` : ''}`;
+  } else if (lowerQuestion.includes('blocked')) {
+    return `There are ${blocked} blocked tasks in your database that require attention.`;
   } else if (lowerQuestion.includes('progress') || lowerQuestion.includes('velocity')) {
-    return 'Team progress metrics are available on the Overview and AI Insights pages.';
+    return `Currently, ${inProgress} tasks are in progress. Your completion rate is ${completionRate}%.${closedToday > 0 ? ` ${closedToday} tasks were completed today.` : ''}`;
+  } else if (lowerQuestion.includes('project')) {
+    if (projectMap.size > 0) {
+      const projectList = Array.from(projectMap.entries())
+        .slice(0, 5)
+        .map(([name, stats]) => `${name} (${stats.total} tasks)`)
+        .join(', ');
+      return `Your projects include: ${projectList}.${projectMap.size > 5 ? ` And ${projectMap.size - 5} more projects.` : ''}`;
+    } else {
+      return 'No project data available in the database.';
+    }
+  } else if (lowerQuestion.includes('team') || lowerQuestion.includes('member') || lowerQuestion.includes('who')) {
+    if (memberMap.size > 0) {
+      const memberList = Array.from(memberMap.entries())
+        .slice(0, 5)
+        .map(([name, stats]) => `${name} (${stats.total} tasks)`)
+        .join(', ');
+      return `Team members with tasks: ${memberList}.${memberMap.size > 5 ? ` And ${memberMap.size - 5} more members.` : ''}`;
+    } else {
+      return 'No team member data available in the database.';
+    }
+  } else if (lowerQuestion.includes('today') || lowerQuestion.includes('recent')) {
+    return `${closedToday > 0 ? `${closedToday} tasks were closed today.` : 'No tasks were closed today.'} You have ${inProgress} tasks currently in progress.`;
   } else {
-    return "I can help you understand your team's productivity metrics. Try asking about tasks, completion rates, or team performance. For detailed data, check the Overview and Tasks pages.";
+    return `Based on your MongoDB data: You have ${totalTasks} total tasks (${openTasks} open, ${inProgress} in progress, ${completed} completed, ${blocked} blocked). Your completion rate is ${completionRate}%. ${closedToday > 0 ? `${closedToday} tasks were closed today.` : ''} What specific information would you like to know?`;
   }
 };
 

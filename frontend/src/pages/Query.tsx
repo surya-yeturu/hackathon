@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Send, Bot } from 'lucide-react';
 import { wsService } from '../services/websocket';
 
+const API_URL = 'http://localhost:8080/api';
+
 interface Message {
   id: string;
   text: string;
@@ -13,7 +15,7 @@ export default function Query() {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: "Hello! I'm your AI assistant. Ask me anything about your team's productivity, tasks, or performance metrics. Try questions like:",
+      text: "Hello! I'm your AI assistant. Ask me anything about your team's productivity, tasks, or performance metrics. I'll analyze data from your MongoDB database to give you accurate answers. Try questions like:\n\n• How many tasks are open?\n• What's the completion rate?\n• Which projects have the most tasks?\n• How many tasks were closed today?",
       sender: 'ai',
       timestamp: new Date(),
     },
@@ -21,36 +23,47 @@ export default function Query() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pendingQueryRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // Connect WebSocket if not already connected
+    if (!wsService.isConnected()) {
+      wsService.connect();
+    }
+
     const unsubscribe = wsService.onMessage((message) => {
-      if (message.type === 'ai_insight') {
+      if (message.type === 'ai_insight' && pendingQueryRef.current) {
+        const response = message.data?.response || 'I received your query. Processing...';
         setMessages((prev) => [
           ...prev,
           {
             id: Date.now().toString(),
-            text: message.data.response || 'I received your query. Processing...',
+            text: response,
             sender: 'ai',
             timestamp: new Date(),
           },
         ]);
         setIsLoading(false);
+        pendingQueryRef.current = null;
       }
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
+    const question = input.trim();
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: input,
+      text: question,
       sender: 'user',
       timestamp: new Date(),
     };
@@ -58,40 +71,77 @@ export default function Query() {
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    pendingQueryRef.current = question;
 
-    // Send query via WebSocket
-    wsService.send({
-      type: 'query',
-      question: input,
-    });
-
-    // Simulate AI response (in real app, this comes from WebSocket)
-    setTimeout(() => {
-      const aiResponse: Message = {
+    try {
+      // Try WebSocket first
+      if (wsService.isConnected()) {
+        wsService.send({
+          type: 'query',
+          question: question,
+        });
+        
+        // Set timeout fallback to REST API if WebSocket doesn't respond
+        setTimeout(async () => {
+          if (pendingQueryRef.current === question) {
+            // WebSocket didn't respond, use REST API
+            await fetchAIResponse(question);
+          }
+        }, 3000);
+      } else {
+        // WebSocket not connected, use REST API directly
+        await fetchAIResponse(question);
+      }
+    } catch (error) {
+      console.error('Error sending query:', error);
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: generateMockResponse(input),
+        text: 'Sorry, I encountered an error processing your query. Please try again.',
         sender: 'ai',
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, aiResponse]);
+      setMessages((prev) => [...prev, errorMessage]);
       setIsLoading(false);
-    }, 1000);
+      pendingQueryRef.current = null;
+    }
   };
 
-  const generateMockResponse = (question: string): string => {
-    const lowerQuestion = question.toLowerCase();
-    if (lowerQuestion.includes('bug') || lowerQuestion.includes('close')) {
-      return 'Currently tracking 15 bugs total. 5 have been closed this week, and 10 are still open.';
-    } else if (lowerQuestion.includes('task') && lowerQuestion.includes('complete')) {
-      return 'Your team has completed 26 tasks this week, with an average completion time of 58.1 hours.';
-    } else if (lowerQuestion.includes('progress') || lowerQuestion.includes('velocity')) {
-      return 'Task completion velocity has decreased by 17.6% this week, indicating potential bottlenecks. There are 12 tasks currently in progress.';
-    } else if (lowerQuestion.includes('team') || lowerQuestion.includes('member')) {
-      return 'Your team consists of 9 active members. Alice has completed 1 task, Bob has 1 ongoing task, and Carol has completed 2 tasks this week.';
-    } else if (lowerQuestion.includes('blocked')) {
-      return 'There are 11 blocked tasks requiring attention. These are primarily in the API Services project.';
-    } else {
-      return "I understand your question. Based on the current data, I can help you analyze team productivity metrics, task completion rates, and identify potential bottlenecks. What specific information would you like to know?";
+  const fetchAIResponse = async (question: string) => {
+    try {
+      const response = await fetch(`${API_URL}/ai/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ question }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const aiResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: data.response || 'I received your query, but got an empty response.',
+          sender: 'ai',
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, aiResponse]);
+      } else {
+        throw new Error('Failed to get AI response');
+      }
+    } catch (error) {
+      console.error('Error fetching AI response:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: 'Sorry, I couldn\'t process your query right now. Please check your connection and try again.',
+        sender: 'ai',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+      if (pendingQueryRef.current === question) {
+        pendingQueryRef.current = null;
+      }
     }
   };
 
