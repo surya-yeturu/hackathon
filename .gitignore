@@ -3,14 +3,12 @@ node_modules/
 frontend/node_modules/
 backend/node_modules/
 
-# Environment variables
-.env
+# Environment variables (keeping .env.example files)
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-frontend/.env
-backend/.env
+# Note: .env files are now tracked for demo purposes
 
 # Build outputs
 dist/

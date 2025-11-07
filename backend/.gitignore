@@ -1,5 +1,5 @@
 node_modules/
-.env
+# .env is now tracked for demo purposes
 *.log
 .DS_Store
 dist/
