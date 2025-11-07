@@ -15,11 +15,12 @@
 4. Check scopes: `repo`, `read:org`, `read:user`
 5. Copy token (starts with `ghp_`)
 
-#### Trello API Key & Token (Required)
+#### Trello API Key & Token (Optional - Can Skip)
 1. Visit: https://trello.com/app-key
 2. Copy API Key (shown on page)
 3. Click "Token" link and authorize
 4. Copy Token
+5. **Note:** You can leave Trello empty and use only GitHub
 
 #### OpenAI Key (Optional)
 1. Visit: https://platform.openai.com/api-keys
@@ -51,12 +52,14 @@ Open `backend/.env` and replace these values:
 
 ```env
 GITHUB_TOKEN=ghp_paste_your_token_here
-TRELLO_API_KEY=paste_your_api_key_here
-TRELLO_TOKEN=paste_your_token_here
+TRELLO_API_KEY=  # Optional - leave empty if not using Trello
+TRELLO_TOKEN=    # Optional - leave empty if not using Trello
 OPENAI_API_KEY=sk-paste_your_key_here  # Optional
 MONGODB_URI=mongodb://localhost:27017/pulsevo  # Or your Atlas connection
 JWT_SECRET=any_random_string_here
 ```
+
+**Note:** You only need GitHub token. Trello is optional - leave those fields empty.
 
 ---
 
@@ -115,12 +118,14 @@ npm run dev
 ## ✅ Checklist
 
 - [ ] GitHub token obtained and added to `.env`
-- [ ] Trello API key and token added to `.env`
+- [ ] Trello API key and token added to `.env` (optional - can skip)
 - [ ] MongoDB set up (Atlas or local)
-- [ ] `.env` file edited with all values
+- [ ] `.env` file edited with required values
 - [ ] Backend server starts successfully
 - [ ] Health endpoint works
 - [ ] Frontend shows "Connected"
+
+**Note:** Trello is optional. You can use the app with just GitHub!
 
 ---
 

@@ -98,6 +98,7 @@ router.post(
         }
       }
 
+      // Trello is optional - only save if both key and token are provided
       if (trelloApiKey && trelloToken) {
         await Config.findOneAndUpdate(
           { key: 'trello_api_key' },
@@ -123,6 +124,12 @@ router.post(
         } catch (error) {
           console.error('Trello credentials verification failed:', error);
         }
+      } else if (trelloApiKey || trelloToken) {
+        // If only one is provided, clear both
+        await Config.findOneAndDelete({ key: 'trello_api_key' });
+        await Config.findOneAndDelete({ key: 'trello_token' });
+        await Config.findOneAndDelete({ key: 'trello_boards' });
+        console.log('Trello credentials cleared (incomplete configuration)');
       }
 
       res.json({ message: 'Configuration saved successfully' });

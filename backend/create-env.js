@@ -28,10 +28,11 @@ REDIS_PASSWORD=
 # Required scopes: repo, read:org, read:user
 GITHUB_TOKEN=ghp_your_github_token_here
 
-# Trello API Configuration
+# Trello API Configuration (OPTIONAL - can be left empty)
 # Get from: https://trello.com/app-key
-TRELLO_API_KEY=your_trello_api_key_here
-TRELLO_TOKEN=your_trello_token_here
+# Leave empty if not using Trello
+TRELLO_API_KEY=
+TRELLO_TOKEN=
 
 # OpenAI API Key (for AI features - OPTIONAL)
 # Get from: https://platform.openai.com/api-keys

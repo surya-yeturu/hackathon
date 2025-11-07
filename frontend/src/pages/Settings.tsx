@@ -56,25 +56,31 @@ export default function Settings() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-dark-text mb-2">Trello API Key</label>
+            <label className="block text-sm font-medium text-dark-text mb-2">
+              Trello API Key <span className="text-dark-muted text-xs">(Optional)</span>
+            </label>
             <input
               type="text"
               value={trelloApiKey}
               onChange={(e) => setTrelloApiKey(e.target.value)}
-              placeholder="Enter your Trello API key"
+              placeholder="Enter your Trello API key (optional)"
               className="w-full px-4 py-3 bg-dark-bg border border-dark-border rounded-lg text-dark-text placeholder-dark-muted focus:outline-none focus:border-blue-500"
             />
+            <p className="mt-2 text-sm text-dark-muted">Leave empty if not using Trello</p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-dark-text mb-2">Trello Token</label>
+            <label className="block text-sm font-medium text-dark-text mb-2">
+              Trello Token <span className="text-dark-muted text-xs">(Optional)</span>
+            </label>
             <input
               type="password"
               value={trelloToken}
               onChange={(e) => setTrelloToken(e.target.value)}
-              placeholder="Enter your Trello token"
+              placeholder="Enter your Trello token (optional)"
               className="w-full px-4 py-3 bg-dark-bg border border-dark-border rounded-lg text-dark-text placeholder-dark-muted focus:outline-none focus:border-blue-500"
             />
+            <p className="mt-2 text-sm text-dark-muted">Leave empty if not using Trello</p>
           </div>
 
           <button

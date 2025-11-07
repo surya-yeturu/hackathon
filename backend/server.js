@@ -41,9 +41,9 @@ async function startServer() {
     await connectDB();
     console.log('✅ MongoDB connected');
 
-    // Connect to Redis
+    // Connect to Redis (non-blocking - falls back to in-memory cache)
     await connectRedis();
-    console.log('✅ Redis connected');
+    // Note: Redis connection may have failed, but in-memory cache is available
 
     // Start data synchronization
     startDataSync(wss);
